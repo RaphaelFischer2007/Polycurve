@@ -1,0 +1,1189 @@
+<!DOCTYPE html>
+<html lang = "en" style = "background-color : #48D1CC; border-width : 0; height : 100%">
+    <head>
+        <title>Polycurve</title>
+        <meta name = "polycurve" charset = "utf-8"/>
+        <Link rel = "StyleSheet" href = "style.css" type = "text / css" />
+        <script src="https://unpkg.com/mathjs/lib/browser/math.js"></script>
+        <script>
+            //coefficient list of the polynomial function, as CoefList=[a,b,c,d,e...] --> f(x)=a+bx+cx²+...
+            var CoefList = [];
+
+            var Values = [];
+
+            //Scale / norm of the grid
+            var Scale = 1;
+
+            //center point of the grid's coordinates :
+            var CenterX = 0;
+            var CenterY = 0;
+
+            var MouseOnCanvas = false;
+
+            var AlreadyAlerted = false; //To know if the user already had the alert about the Values' accuracy
+
+            function setupCanvas(canvas) {
+                //clean the canvas to avoid the blurry, return context. Found in https://web.dev/canvas-hidipi/
+
+                // Get the device pixel ratio, falling back to 1.
+                var dpr = window.devicePixelRatio || 1;
+                // Get the size of the canvas in CSS pixels.
+                var rect = canvas.getBoundingClientRect();
+                // Give the canvas pixel dimensions of their CSS
+                // size * the device pixel ratio.
+                canvas.width = rect.width * dpr;
+                canvas.height = rect.height * dpr;
+                var ctx = canvas.getContext('2d');
+                // Scale all drawing operations by the dpr, so you
+                // don't have to worry about the difference.
+                ctx.scale(dpr, dpr);
+
+                return ctx;
+            }
+
+            function drawGrid(canvas, ctx) {
+                //Draw a grid and the x and y Values on the canvas
+                
+                //setup context style
+                ctx.strokeStyle = "#000000";
+                ctx.fillStyle = 'black';
+                ctx.font = "15px Arial";
+
+                //These gaps helps to always center the grid to the center point by displaying the lines and the Values with a small gap
+                gapX = (StartingX - CenterX) % Scale * 49 / Scale;
+                gapY = (StartingY - CenterY) % Scale * 49 / Scale;
+
+                //The size of every square of the grid is 49px/49px
+
+                for (let pos = 0 ; pos < canvas.width; pos+= 49){
+                    //pos here represent the abscissa of a line (without the gapX)
+
+                    xValue = pos * Scale / 49 + StartingX;
+                    textHeight = canvas.height - canvas.height % 49 + StartingY * 49 / Scale - gapY - 7
+
+                    //First, we display the Values on the x axis. The value is pos * Scale / 49 + StartingX
+
+                    //Here we don't display the 0 on the x axis if it is supposed to be on the left, right or bottom border of the grid to avoid numbers overlapping
+                    if (13 + 49 * StartingY / Scale > 0 && - 49 * StartingX / Scale > 25 && - 49 * StartingX / Scale < 1205 && Scale * pos / 49 + StartingX == 0) {
+
+                        null;
+
+                    //If the theorical position of the value is out of the canvas, we display it either on the top or on the bottom of the canvas
+                    } else if (textHeight < 0){
+
+                        ctx.textAlign = "left";
+                        ctx.fillText(xValue, pos + gapX - 22, 19);
+
+                    } else if (textHeight > canvasHeight * 100) {
+
+                        ctx.textAlign = "left";
+                        ctx.fillText(xValue, pos + gapX - 22, canvas.height - 18);
+
+                    } else {
+
+                        ctx.textAlign = "left";
+                        ctx.fillText(xValue, pos + gapX - 22, textHeight);
+
+                    }
+
+                    //Then we draw the lines
+                    ctx.beginPath();
+                    ctx.moveTo(pos + gapX, 0);
+                    ctx.lineTo(pos + gapX, canvas.height);
+                    ctx.stroke();
+
+                    //The size of the line is tripled when it's an axis
+                    if (xValue == - Scale) {
+
+                        ctx.lineWidth = 3;
+
+                    } else {
+
+                        ctx.lineWidth = 1;
+
+                    }
+
+                }
+                
+                //Same but with the x lines and the y axis Values
+                for (let pos = 0 ; pos < canvas.height ; pos+= 49){
+
+                    yValue = - (canvas.height - canvas.height % 49) * Scale / 49 - StartingY + pos * Scale / 49
+                    
+                    //We never display de y axis 0
+                    if (yValue != 0) {
+
+                        if (-25 - 49 * StartingX / Scale < 0){
+
+                            ctx.textAlign = "left";
+                            ctx.fillText( - yValue, 7, pos - gapY - canvasHeight);
+
+                        } else if (-25 - 49 * StartingX / Scale > canvas.width - 7) {
+
+                            ctx.textAlign = "right";
+                            ctx.fillText( - yValue, canvas.width - 7, pos - gapY - canvasHeight);
+
+                        } else {
+
+                            ctx.textAlign = "right";
+                            ctx.fillText( - yValue, -10 - 49 * StartingX / Scale + gapX, pos - gapY - canvasHeight);
+
+                        }
+
+                    }
+
+                    ctx.beginPath();
+                    ctx.moveTo(0, pos - gapY);
+                    ctx.lineTo(canvas.width, pos - gapY);
+                    ctx.stroke();
+
+                    if (-yValue == Scale) {
+                        
+                        ctx.lineWidth = 3;
+
+                    } else {
+
+                        ctx.lineWidth = 1;
+
+                    }
+
+                }
+
+            }
+
+            function getClickPosition(event) {
+                //When the user click on the canvas, this function get the coords, compute the action that will be executed, and execute it
+
+                //get the coords of the click
+                var x = event.clientX;     // Get the horizontal coordinate
+                var y = event.clientY;     // Get the vertical coordinate
+
+                //compute the coordinate on the grid
+                gapX = (StartingX - CenterX) % Scale * 49 / Scale;
+                gapY = (StartingY - CenterY) % Scale * 49 / Scale;
+
+                tempX = x / 49 * Scale + StartingX;
+                tempY = (canvas.height - canvas.height % 49 - ( - StartingY - gapY) * 49 / Scale - y)/49 * Scale;
+
+                maximumDistance = 0;
+                closestValue = "None";
+
+                for (let i in Values){
+
+                    distance = (tempX - Values[i][0]) ** 2 + (tempY - Values[i][1]) ** 2;
+
+                    if (distance > maximumDistance && distance < 0.2 * Scale**2) {
+                        
+                        closestValue = Values[i];
+                        maximumDistance = distance;
+
+                    }
+                }
+                
+                if (closestValue == "None") {
+
+                    x = Math.round((x - gapX)/49) * Scale + StartingX;
+                    y = Math.round(tempY / Scale) * Scale;
+                    
+                } else {
+
+                    x = closestValue[0];
+                    y = closestValue[1];
+
+                }
+
+                action = insertCoords(x, y);
+
+                CoefList = computeFunction(Values, CoefList, action);
+
+                refreshCanvas();
+            }
+
+            function insertCoords(x, y) {
+                //Compute the action that will be executed and insert/replace/delete the value. action = 1 means the value will be added, action = 0 means the value replace another (when two x Values are equals), action = -1 means the value is deleted.
+
+                action = 1; //by default
+
+                for (pos in Values) {
+
+                    if (Values[pos][0] == x) {
+
+                        if (Values[pos][1] == y){
+
+                            action = -1;
+
+                        } else {
+
+                            action = 0;
+
+                        }
+
+                        //We delete the value from the list
+                        Values.splice(pos, 1);
+                        break
+
+                    }
+
+                }
+
+                if (action != -1) {
+
+                    Values.push([x,y])
+
+                }
+
+                //We add the value to the valuesDiv
+
+                document.getElementById("valuesDiv").innerHTML = "";
+
+                for (i in Values) {
+
+                    valueX = Values[Values.length - i - 1][0];
+                    valueY = Values[Values.length - i - 1][1];
+
+                    newDiv = document.createElement("div");
+                    newDiv.classList.add("value");
+                    newDiv.textContent = "( " + valueX + " ; " + valueY + " )";
+                    document.getElementById("valuesDiv").appendChild(newDiv);
+
+                }
+
+                return action;
+            }
+
+            function refreshCanvas() {
+                //Refresh the canvas, draw the grid, the points the polynomial and the special function
+
+                //We get the canvas
+                canvas = document.getElementById("canvas");
+
+                //Clean the canvas to avoid the blurry whtihout adapt it size
+                var ctx = canvas.getContext('2d');
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                drawGrid(canvas,ctx);
+
+                drawPoints(Values,ctx);
+
+                drawFunction(ctx, CoefList)
+
+                displayEquation(ctx, CoefList);
+
+                drawSpecialFunction(ctx);
+            }
+
+            function insertSpecialCoords() {
+                //Insert the coordinates from the bottom input
+
+                //Get coordinates
+                x = math.evaluate(document.getElementById("xInput").value);
+                y = math.evaluate(document.getElementById("yInput").value);
+
+                //Check if the inputs aren't empty
+                if (x != null && y != null) {
+
+                    action = insertCoords(x, y);
+
+                    CoefList = computeFunction(Values, CoefList, action);
+
+                    refreshCanvas();
+
+                    //Delete inputs
+                    document.getElementById("xInput").value = "";
+                    document.getElementById("yInput").value = "";
+
+                }
+
+            }
+
+            function drawPoints(Values,ctx) {
+                //Draw the points in Values
+
+                ctx.fillStyle = 'blue';
+
+                gapX = (StartingX - CenterX) % Scale;
+                gapY = (StartingY - CenterY) % Scale;
+
+                for (pos in Values) {
+
+                    ctx.beginPath();
+                    ctx.arc((Values[pos][0] - StartingX + gapX) * 49 / Scale, canvas.height - canvas.height % 49 - (Values[pos][1] - StartingY + gapY) * 49 / Scale, 7,0, Math.PI+(Math.PI*2)/2,true);
+                    ctx.closePath();
+                    ctx.fill();
+
+                }
+
+            }
+
+            function drawFunction(ctx, CoefList) {
+                //Draw the polynomial function
+
+                gapX = (StartingX - CenterX) % Scale;
+                gapY = (StartingY - CenterY) % Scale;
+
+                ctx.strokeStyle = "#FF0000"; //Red
+
+                //We compute the output of the function for each pixel abscissa of the canvas
+                for (i = (StartingX - gapX) * 49 / Scale ; i < canvas.width + StartingX * 49 / Scale ; i++) {
+
+                    //n is the value of the abscissa in the grid and n1 is the next abscissa
+                    var n = i * Scale / 49;
+                    var n1 = n + Scale / 49;
+
+                    //We then go from (n ; f(n)) to (n1 ; f(n1))
+                    ctx.beginPath();
+                    ctx.moveTo(i - 49 * (StartingX - gapX) / Scale, canvas.height - canvas.height % 49  - (executeFunction(CoefList,n) - (StartingY - gapY)) * 49 / Scale);
+                    ctx.lineTo(i - 49 * (StartingX - gapX) / Scale + 1, canvas.height - canvas.height % 49  - (executeFunction(CoefList,n1) - (StartingY - gapY)) * 49 / Scale);
+                    ctx.stroke();
+                    ctx.lineWidth = 2;
+
+                }
+
+            }
+
+            function displayEquation(ctx, CoefList) {
+                //Turn the coefficient list into an equation and display it on the equation's paragraph
+
+
+                var equation = "f(x) =";
+
+                //If there's no Values, we display a "?"
+                if (CoefList.length == 0) {
+
+                    equation = equation.concat(" ", "?");
+
+                } else {
+
+
+                    for (let i = 1 ; i <= CoefList.length ; i++) {
+
+                        let coef = CoefList[CoefList.length - i];
+                        //CoefList.length - i != 0 means the coef is the last of the list, so is the first displayed
+                        if (coef == 1){
+
+                                if (equation != "f(x) =") {
+                                    
+                                    //If the coef == 1, the monomial isn't the first after "f(x) =", we just add a "+" before the "x^n"
+                                    equation = equation.concat(" ", "+ ");
+
+                                } else {
+                                    
+                                    //Same but if the monomial is the first after "f(x) =", we don't put the "+" to avoid "f(x) = + ..."
+                                    equation = equation.concat(" ", "");
+                                }
+
+                            if (CoefList.length - i == 0) {
+                                
+                                //If the power of x is 0, then the coef has to be displayed
+                                equation = equation.concat("", "1 ");
+
+                            }
+
+                        } else if (coef > 0) {
+
+                            if (equation == "f(x) =") {
+                                
+                                //Same as before, to avoid "f(x) = + ..."
+                                equation = equation.concat(" ", (toFraction(coef)).toString());
+
+                            } else {
+
+                                equation = equation.concat(" ", "+ " + (toFraction(coef)).toString())
+
+                            }
+
+                        } else if (coef < 0) {
+
+                            //However, we always display the -
+                            equation = equation.concat(" ", "- " + (toFraction(-1*coef)).toString());
+
+                        } else {
+                            //If the coef == 0
+
+                            continue;
+
+                        }
+
+                        //Then we add "x^n" with CoefList.length - i the power of x
+
+                        if (CoefList.length - i == 0) {
+                            //If the power of x is 0
+
+                            continue;
+
+                        } else if (CoefList.length - i == 1) {
+
+                            if (coef == 1) {
+
+                                equation = equation.concat("","x");
+
+                            } else {
+
+                                equation = equation.concat("","*x");
+
+                            }
+
+                        } else {
+
+                            if (coef == 1) {
+
+                                equation = equation.concat("","x^" + (CoefList.length - i).toString());
+
+                            } else {
+
+                                equation = equation.concat("","*x^" + (CoefList.length - i).toString());
+
+                            }
+                        }
+                    }
+                }
+
+                //Replace the equation
+
+                if (equation == "f(x) =") {
+                    
+                    document.getElementById("equation").textContent = equation + " 0";
+
+                } else {
+
+                    document.getElementById("equation").textContent = equation;
+
+                }
+            }
+
+            function executeFunction(CoefList, x) {
+                //Compute f(x) for x with the CoefList of f
+
+                sum = 0;
+
+                for (j in CoefList) {
+
+                    sum += CoefList[j] * x ** j;
+
+                }
+
+                return sum;
+
+            }
+
+            function computeFunction(Values, previousCoefList, action) {
+                //Compute the polynomial with the Values according to the action, using the previous coefList
+
+                //The main method we are going to use is the following : we found a function k that nullify in all of the ancient Values (those that aren't changed) as k(x) = (x-x1)(x-x2)                  (x-x3)... with x1, x2, x3... being the previous Values. That way we have a function that nullify in all of the ancient Values and no other. So adding k(x) to f(x) don't                     have any impact on the previous Values but change the output of the function for the new value. We calculate the difference between the y of new value and the output of f                   for the new value and divide it by the output of k for the new value. We then multiply k by this value and add it to f. For instance, if the new value's coordinates are                     (x,y), if f(x) = 2, k(x) = 3 and y = 11, then we need to multiply k(x) by (y - f(x)) / k(x) = (11 - 2) / 3 = 3. So for h(x) = f(x) + 3k(x), h(x) = y.
+                
+                //If we delete a value, we calculate k(x) and just multiply it by the last coefficient of the previous coef list and subtract it from f so that the function will loose a                    degree
+
+                //Some checks for the simplest case
+                if (Values.length == 0) {
+
+                    return [];
+
+                }
+
+                if (Values.length == 1) {
+
+                    return [Values[0][1]];
+
+                }
+                
+                if(Values.length == 2) {
+
+                    //Compute the slope m and the value p at the y axis
+                    let m = (Values[0][1]-Values[1][1]) / (Values[0][0]-Values[1][0]);
+                    let p = Values[0][1] - m * Values[0][0];
+
+                    return [p,m];
+
+                }
+
+                //If action == 0 we will compute the function as if we deleted a value and compute it again as if we added a value
+                if (action == -1 || action == 0) {
+                    //If a value has been deleted
+
+                    if (action == 0) {
+
+                        //Then we need to temporarily remove the substitute value
+                        deletedValue = Values.pop();
+
+                    }
+
+                    let xValues = []; //List for the Values' x opposites to compute the function k(x) = (x-x1)(x-x2)(x-x3)
+
+                    for (i in Values) {
+
+                        xValues.push(-1*Values[i][0]);
+
+                    }
+
+                    //We delete and store the last coef of the previous coef list because it will be nullified
+                    let deletedCoef = previousCoefList.pop();
+
+                    //This is the coef list for k(x)
+                    let tempCoefList = [];
+
+                    d = xValues.length;
+
+                    //We need to calculate coefficients of k(x) one by one
+                    for (i = 1 ; i <= d ; i++) {
+
+                        //computeCoef returns ""(coef, xValues)""
+                        result = JSON.parse(JSON.parse(computeCoef(xValues, Values.length - i + 1, 0, 1)));
+
+                        tempCoefList.push(result[0]);
+
+                        //We need to restore xValues because it's changed during computeCoef's execution
+                        xValues = result[1];
+
+                    }
+                    
+                    //The last coef is always 1
+                    tempCoefList.push(1);
+
+                    for (i in previousCoefList) {
+
+                        previousCoefList[i] = previousCoefList[i] - deletedCoef * tempCoefList[i];
+
+                    }
+
+                    if (action == -1) {
+
+                        return previousCoefList;
+
+                    }
+                }
+
+                //Restore the previously deleted value to now calculate the function as if the user added a value
+                if (action == 0) {
+
+                    Values.push(deletedValue);
+
+                }
+
+                if (action == 1 || action == 0) {
+                    //Most of it is the same as before
+                    let xValues = [];
+
+                    for (i in Values) {
+
+                        xValues.push(-1*Values[i][0]);
+
+                    }
+
+                    //We delete the last value of xValues as it's the added value, so it won't be nullified by k(x)
+                    xValues.pop();
+
+                    let tempCoefList = [];
+                    d = xValues.length;
+
+                    for (i = 1 ; i <= d ; i++) {
+
+                        result = JSON.parse(JSON.parse(computeCoef(xValues, Values.length - i, 0, 1)));
+
+                        tempCoefList.push(result[0]);
+                        xValues = result[1];
+
+                    }
+
+                    tempCoefList.push(1);
+
+                    //Here instead of multiply coefficients by the last previous coefficient, we multiply it so that the new value's ordinate matches the expected one
+                    newValue = Values[Values.length-1];
+                    currentValue = executeFunction(tempCoefList, newValue[0]);
+                    previousValue = executeFunction(previousCoefList, newValue[0]);
+                    globalCoef = (newValue[1] - previousValue) / currentValue;
+
+                    //To avoid list out of range error
+                    previousCoefList.push(0);
+
+                    for (i in tempCoefList) {
+
+                        tempCoefList[i] = globalCoef * tempCoefList[i] + previousCoefList[i];
+
+                    }
+
+                    return tempCoefList;
+                }
+            }
+
+            function computeCoef(xValues, nbOfRoots, sum, factor) {
+                //Reccurence function that will calculate the coefficient of k(x) = (x - x1)(x - x2)(x - x3)... with nbOfRoots different Values of xValues. For exemple, if k(x) = (x - 3)                   (x - 5)(x + 1) and we search the coefficient of x^1, we have a factor = 1 and a sum = 0. We have to select each combination of 2 Values in -3 ; -5 and 1. We first delete -3                 and multiply the factor by -3. Then we delete -5 and multiply the factor by -5. As we already have two Values, we add the factor (15) to the sum and come back to the                        previous state, where the factor was -3, and we delete 1 and multiply the factor by 1, add the factor to the sum so that the sum = 12. As there is no more value in xValues,                 we come back to the first state with factor = 1 and xValues = [-5, 1]. We delete -5 and multiply the factor by -5. Then we delete 1 and multiply the factor by 1 and add it                  to the sum that's now equal to 7. As there is no more value in xValues, we can only come back to the first state, however there is only one value, so we stop here and                       return the sum.
+
+                //We keep this value to return it at the end
+                let tempXValues = xValues.slice();
+                let k = xValues.length;
+
+                for (let i = 0 ; i < k ; i++) {
+
+                    if (nbOfRoots == 1) {
+
+                        deleted = (xValues.splice(0,1));
+                        sum += factor * deleted;
+
+                    } else {
+
+                        deleted = (xValues.splice(0,1));
+                        result = JSON.parse(JSON.parse(computeCoef(xValues, nbOfRoots-1, sum, factor*deleted)));
+                        sum = result[0];
+                        xValues = result[1];
+
+                    }
+                }
+
+                return JSON.stringify(JSON.stringify([sum, tempXValues]));
+            }
+
+            function toFraction(x) {
+                //Calculate a fraction from a decimal number and return it in a string
+
+                //Test if x is already an integer 
+                if (math.round(x , 13) % 1 == 0) {
+
+                    return math.round(x , 13);
+
+                }
+
+                //Get the accuracy from the accuracy input, it'll define how many Values this function will try to find the fraction. If the accuracy is 3, it'll try 10^3 Values
+                for (let j = 0 ; j <= 9 ; j++){
+
+                    if (document.getElementById("accuracy" + j.toString()).checked == true){
+
+                        fractionsPrecision = j;
+                        break;
+                        
+                    }
+                }
+
+                //We test for each value if multiplying or dividing it by x result in an integer
+                for (let i = 1 ; i <= 10**fractionsPrecision ; i++) {
+                    
+                    //The precision of the round decrease when the common logarithm of i increase
+                    roundPrecision = canvasWidth - (i - i %1).toString().length;
+
+                    //Try to multiply
+                    if (math.round(x * i, roundPrecision) % 1 == 0) {
+
+                        num = i * x;
+
+                        if (math.round(num , roundPrecision) % 1 == 0) {
+
+                            num = math.round(num , roundPrecision);
+
+                        }
+
+                        denom = i;
+
+                        return num.toString() + "/" + denom.toString();
+
+                    }
+
+                    //Try to divide
+                    if (math.round(i / x, roundPrecision) % 1 == 0) {
+
+                        denom = i / x;
+
+                        if (math.round(denom , roundPrecision) % 1 == 0) {
+
+                            denom = math.round(denom , roundPrecision);
+
+                        }
+
+                        num = i;
+
+                        return num.toString() + "/" + denom.toString();
+                    }
+                }
+
+                //If we can't find any fraction
+                return(x);
+            }
+
+            function changeCheckbox(checkboxNb) {
+                //Make sure ther's always one and only one checked checkbox. checkboxNb is the checkbox the user clicked on
+
+                //We warn the user of the possible lag caused by the calculations in higher accuracies if he goes for an accuracy of 5 or higher and if he isn't already warned
+                if (checkboxNb >= 5 && AlreadyAlerted == false) {
+
+                    if (confirm("Warning ! If you use 5 or higher accuracy, your computer may be slowed down, especially if you entered many Values") == true) {
+
+                        AlreadyAlerted = true;
+
+                    } else {
+                        document.getElementById("accuracy" + checkboxNb.toString()).checked = false;
+                        return;
+                    }
+                }
+
+                //We uncheck all the checkbox that arn't the one the user clicked on
+                for (let i = 0 ; i <= 9 ; i++){
+
+                    if (i != checkboxNb){
+
+                        document.getElementById("accuracy" + i.toString()).checked = false;
+
+                    }
+                }
+
+                document.getElementById("accuracy" + checkboxNb.toString()).checked = true;
+
+                //We display again the equation to compute the coefficient with the new accuracy
+                var ctx = document.getElementById("canvas").getContext('2d');
+                displayEquation(ctx, CoefList);
+
+                return;
+            }
+
+            function addStartingX(value) {
+                //Add the value to StartingX and CenterX, then refresh the canvas
+
+                StartingX += value * Scale;
+                CenterX += value * Scale;
+
+                canvas = document.getElementById("canvas");
+                var ctx = canvas.getContext('2d');
+
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                drawGrid(canvas, ctx);
+                drawPoints(Values,ctx);
+                drawFunction(ctx, CoefList);
+                drawSpecialFunction(ctx);
+
+                return;
+            }
+
+            function addStartingY(value) {
+                //Add the value to StartingY and CenterY, then refresh the canvas
+
+                StartingY += value * Scale;
+                CenterY += value * Scale;
+
+                canvas = document.getElementById("canvas");
+                var ctx = canvas.getContext('2d');
+
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                drawGrid(canvas, ctx);
+                drawPoints(Values,ctx);
+                drawFunction(ctx, CoefList);
+                drawSpecialFunction(ctx);
+
+                return;
+            }
+
+            function zoomIn() {
+               //Decrease the scale and change the starting X and Y to make sure the center point is the same. Then refresh the canvas
+ 
+               //As the scale is a power of two :
+               Scale /= 2;
+ 
+               //We increase the starting x by a fourth of the canvas width/height to make sure the center point is the same
+               StartingX += math.round(canvas.width / 100, 0) * Scale;
+               StartingY += math.round(canvas.height / 100, 0) * Scale;
+ 
+               //As the center point can always be written as n/(2^xIndex), we compute xIndex. Then we convert it in binary as when the scale is in the binary code of xIndex (for exemple                  if xIndex = 1001 in binary and scale = 8), there's a small shift on the starting X equal to scale. However, if the scale is equal to centerX, there'll be a shift of centerX                 This also applies to starting Y
+ 
+               tempCenterX = CenterX;
+               xIndex = 0;
+ 
+               while (tempCenterX % 1 != 0) {
+ 
+                   xIndex += 1
+                   tempCenterX *= 2;
+ 
+               }
+ 
+               tempCenterY = CenterY;
+               yIndex = 0;
+ 
+               while (tempCenterY % 1 != 0) {
+ 
+                   yIndex += 1
+                   tempCenterY *= 2;
+ 
+               }
+ 
+               binCenterX = (tempCenterX >>> 0).toString(2);
+               binCenterY = (tempCenterY >>> 0).toString(2);
+ 
+               if (CenterX == Scale) {
+ 
+                   StartingX += CenterX;
+ 
+               } else if (math.log(CenterX, 2) % 1 != 0 && binCenterX[binCenterX.length - math.log(2 ** xIndex * Scale, 2) - 1] == "1") {
+ 
+                   StartingX += Scale;
+ 
+               }
+ 
+               if (CenterY == Scale) {
+ 
+                   StartingY += CenterY;
+ 
+               } else if (math.log(CenterY, 2) % 1 != 0 && binCenterY[binCenterY.length - math.log(2 ** yIndex * Scale, 2) - 1] == "1") {
+ 
+                   StartingY += Scale;
+ 
+               }
+ 
+               canvas = document.getElementById("canvas");
+               var ctx = canvas.getContext('2d');
+ 
+               ctx.clearRect(0, 0, canvas.width, canvas.height);
+               drawGrid(canvas, ctx);
+               drawPoints(Values,ctx);
+               drawFunction(ctx, CoefList);
+               drawSpecialFunction(ctx);
+           }
+ 
+           function zoomOut() {
+               //Increase the scale and change the starting X and Y to make sure the center point is the same. Then refresh the canvas
+ 
+               //As the scale is a power of two :
+               Scale *= 2;
+ 
+               //We decrease the starting x by a half of the canvas width/height to make sure the center point is the same
+               StartingX = -math.round(canvas.width / 100, 0) * Scale;
+               StartingY = -math.round(canvas.height / 100, 0) * Scale;
+              
+              //To center the grid around the center point and not around the origin
+               StartingX += CenterX - CenterX % Scale;
+               StartingY += CenterY - CenterY % Scale;
+
+               //If centerX or centerY is negative and not on a graduation, we need to decrease it by scale
+               if (CenterX < 0 && CenterX % Scale != 0) {
+
+                   StartingX -= Scale;
+
+               }
+
+               if (CenterY < 0 && CenterY % Scale != 0) {
+
+                   StartingY -= Scale;
+
+               }
+
+               canvas = document.getElementById("canvas");
+               var ctx = canvas.getContext('2d');
+
+               ctx.clearRect(0, 0, canvas.width, canvas.height);
+               drawGrid(canvas, ctx);
+               drawPoints(Values,ctx);
+               drawFunction(ctx, CoefList);
+               drawSpecialFunction(ctx);
+           }
+
+            document.onkeydown = function (keyEvent) {
+                //Move the grid when an arrow is pressed
+
+                if (MouseOnCanvas) {
+
+                    keyEvent = keyEvent || window.event;
+
+                    if (keyEvent.keyCode == 37) {
+
+                        //Left arrow
+                        addStartingX(-1);
+
+                    } else if (keyEvent.keyCode == 38) {
+
+                        //Up arrow
+                        addStartingY(1);
+
+                    } else if (keyEvent.keyCode == 39) {
+
+                        //Right arrow
+                        addStartingX(1);
+
+                    } else if (keyEvent.keyCode == 40) {
+
+                        //Down arrow
+                        addStartingY(-1);
+
+                    }
+                }
+            };
+
+            window.addEventListener("wheel", function (wheelEvent) {
+                //Zoom in or out when the user scroll
+
+                if (MouseOnCanvas) {
+
+                    wheelEvent = wheelEvent || window.event;
+
+                    if (wheelEvent.deltaY > 0) {
+
+                        zoomOut();
+
+                    } else {
+
+                        zoomIn();
+
+                    }
+                }
+            });
+
+            function drawSpecialFunction(ctx) {
+                //Draw the function from the equation input
+
+                //Expression with "x"
+                literalExpression = document.getElementById("equationInput").value
+
+                gapX = (StartingX - CenterX) % Scale;
+                gapY = (StartingX - CenterY) % Scale;
+
+                ctx.strokeStyle = "#44CC00";
+
+                //We compute the output of the function for each pixel abscissa of the canvas
+                for (i = (StartingX - gapX) * 49 / Scale ; i < canvas.width + StartingX * 49 / Scale ; i++) {
+
+                    //n is the value of the abscissa in the grid and n1 is the next abscissa
+                    var n = i * Scale / 49;
+                    var n1 = n + Scale /49;
+
+                    //The numeric expression is the one with the n or n1 in place of "x"
+                    numericExpressionN = "";
+                    numericExpressionN1 = "";
+
+                    //We delete spaces, replace "x" with n and n1 and prevent errors when "x" is multiplied (for exemple when there's "3x")
+                    for (pos in literalExpression) {
+
+                        let char = literalExpression[pos];
+
+                        if (char == " ") {
+
+                            continue;
+
+                        }
+
+                        if (char == "x") {
+
+                            if ("1234567890".includes(numericExpressionN[numericExpressionN.length - 1])) {
+
+                                numericExpressionN += "*(" + n.toString()+")";
+                                numericExpressionN1 += "*(" + n1.toString()+")";
+
+                            } else {
+                                
+                                numericExpressionN += n.toString();
+                                numericExpressionN1 += n1.toString();
+
+                            }
+                        } else {
+
+                            numericExpressionN += char;
+                            numericExpressionN1 += char;
+
+                        }
+                    }
+
+                    //We then go from (n ; f(n)) to (n1 ; f(n1))
+                    ctx.beginPath();
+                    ctx.moveTo(i - 49 * (StartingX - gapX) / Scale, canvas.height - canvas.height % 49 - (math.evaluate(numericExpressionN) - (StartingY - gapY)) * 49 / Scale);
+                    ctx.lineTo(i - 49 * (StartingX - gapX) / Scale + 1, canvas.height - canvas.height % 49 - (math.evaluate(numericExpressionN1) - (StartingY - gapY)) * 49 / Scale);
+                    ctx.stroke();
+                    ctx.lineWidth = 2;
+                }
+            }
+            function adaptElementSize() {
+                //We change the size of left paragraphs so that they align to the bottom of the canvas
+                ctx = setupCanvas(canvas);
+
+                winHeight = window.innerHeight;
+
+                document.getElementById("equation").style = "height : " + (math.round(0.3079 * winHeight, 0)).toString() + "px ;";
+                document.getElementById("accuracy").style = "height : " + (math.round(0.0937 * winHeight, 0)).toString() + "px ;";
+                
+                return ctx
+            }
+
+            function animateButtonIn(element) {
+                //Increase the size of a button when mouse is over
+
+                element.height = "40";
+                element.width = "40";
+
+                MouseOnCanvas = true ;
+
+            }
+
+            function animateButtonOut (element) {
+                //Decrease the size of a button when mouse is over
+
+                element.height = "50";
+                element.width = "50";
+
+                MouseOnCanvas = false ;
+
+            }
+            
+            function resize() {
+
+                canvas = document.getElementById("canvas");
+
+                setupCanvas(canvas);
+
+                ctx = canvas.getContext('2d');
+
+                var canvasWidth = (canvas.width - canvas.width % 98) / 98;
+                var canvasHeight = (canvas.height - canvas.height % 98) / 98;
+                
+                StartingX = CenterX - canvasWidth * Scale + CenterX % Scale;
+                StartingY = CenterY - canvasHeight * Scale + CenterY % Scale;
+                
+                zoomOut();
+                zoomIn();
+
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                drawGrid(canvas,ctx);
+                drawPoints(Values,ctx);
+
+                if (CoefList != []) {
+
+                    drawFunction(ctx, CoefList);
+
+                } else {
+
+                    drawFunction(ctx, [0]);
+
+                }
+
+                drawSpecialFunction(ctx);
+
+            }
+
+            window.onresize = resize;
+        </script>
+    </head>
+    <body>
+        <canvas id="canvas" onclick = "getClickPosition(event)" onMouseOver = "MouseOnCanvas = true ;" onMouseOut = "MouseOnCanvas = false ;"></canvas>
+
+        <div style="position:absolute; top:0; left:0; width: 75%;height: 80%;">
+            <table height="100%" width="100%">
+                <tr>
+                    <td></td>
+                    <td style = "min-width : 50px;"></td>
+                    <td style="height : 50px; text-align:center; vertical-align:middle">
+                        <input id = "upArrow" style = "position : relative; z-index : 20;" type="image" src="/image/upArrow.png" onclick = "addStartingY(1)" height = "50" width="50" onMouseOver = "animateButtonIn(this)" onMouseOut = "animateButtonOut(this)"></input>
+                    </td>
+                    <td>
+                        <input type = "image" src="/image/transparent.png" width = "60" width = "1"></input>
+                    </td>
+                    <td></td>
+                    <td style="height : 50px; text-align:right; vertical-align:middle ;">
+                        <input type = "image" src="/image/transparent.png" height = "50" width = "1"></input>
+                    </td>
+                </tr>
+                <tr style="height:100%">
+                    <td style="min-width:50px; text-align:center; vertical-align:middle">
+                        <input id = "leftArrow" style = "position : relative; z-index : 20;" type="image" src="/image/leftArrow.png" onclick = "addStartingX(-1)" height = "50" width="50" onMouseOver = "animateButtonIn(this)" onMouseOut = "animateButtonOut(this)"></input>
+                    </td>
+                    <td></td>
+                    <td style="width:100%"></td>
+                    <td></td>
+                    <td style="height : 50px; text-align:center; vertical-align:middle ;"></td>
+                    <td style="min-width:50px; text-align:center; vertical-align:middle">
+                        <input id = "rightArrow" style = "position : relative; z-index : 20;" type="image" src="/image/rightArrow.png" onclick = "addStartingX(1)" height = "50" width="50" onMouseOver = "animateButtonIn(this)" onMouseOut = "animateButtonOut(this)"></input>
+                    </td>
+                </tr>
+                <tr style = "height : 50px" >
+                </tr>
+                <tr>
+                    <td></td>
+                    <td style = "min-width : 50px;"></td>
+                    <td style = "height : 50px; text-align:center; vertical-align:middle ;">
+                        <input id = "downArrow" style = "position : relative; z-index : 20;" type="image" src="/image/downArrow.png" onclick = "addStartingY(-1)" height = "50" width="50" onMouseOver = "animateButtonIn(this)" onMouseOut = "animateButtonOut(this)"></input>
+                    </td>
+                    <td>
+                    </td>
+                    <td style="height : 50px; text-align:center; vertical-align:middle ; min-width : 50px;">
+                        <input id = "zoomIn" style = "position : relative; z-index : 20;" type = "image" src = "/image/zoomInButton.png" alt = "Submit" onclick = "zoomIn()" height = "50" width = "50" onMouseOver = "animateButtonIn(this)" onMouseOut = "animateButtonOut(this)"></input> 
+                    </td>
+                    <td style="height : 50px; text-align:center; vertical-align:middle ;">
+                        <input id = "zoomOut" style = "position : relative; z-index : 20;" type = "image" src = "/image/zoomOutButton.png" alt = "Submit" onclick = "zoomOut()" height = "50" width = "50" onMouseOver = "animateButtonIn(this)" onMouseOut = "animateButtonOut(this)"></input>
+                    </td>
+                </tr>
+                <tr style = "height : 30px;">
+                </tr>
+            </table>
+        </div>
+
+        <script>
+            canvas = document.getElementById("canvas");
+
+            setupCanvas(canvas);
+        </script>
+        <div id = "interface" class = "mainDiv">
+            <div class = "subDiv" id = "valuesDiv" style = "display : block ; overflow-x : hidden ; overflow-y : auto ; width : 100 % ;">
+            </div>
+            <div class = "subDiv">
+                <p id = "equation" class = "equationParagraph" style = "height : 100% ; overflow-y : auto;">f(x) = ?</p>
+            </div>
+            <div class = "subDiv">
+                <p id = "accuracy" class = "accuracyParagraph">Values' accuracy</p>
+                <div style = "height : 40px ; display : block ; overflow-y : hidden ; overflow-x : auto ; white-space : nowrap ;">
+                    <input type = "checkbox" id = "accuracy0" name = "0" onchange = "changeCheckbox(0)"/>
+                    <label for = "0"> 0 </label>
+                    <input type = "checkbox" id = "accuracy1" name = "1" onchange = "changeCheckbox(1)"/>
+                    <label for = "1"> 1 </label>
+                    <input type = "checkbox" id = "accuracy2" name = "2" onchange = "changeCheckbox(2)"/>
+                    <label for = "2"> 2 </label>
+                    <input type = "checkbox" id = "accuracy3" name = "3" onchange = "changeCheckbox(3)" checked/>
+                    <label for = "3"> 3 </label>
+                    <input type = "checkbox" id = "accuracy4" name = "4" onchange = "changeCheckbox(4)"/>
+                    <label for = "4"> 4 </label>
+                    <input type = "checkbox" id = "accuracy5" name = "5" onchange = "changeCheckbox(5)"/>
+                    <label for = "5"> 5 </label>
+                    <input type = "checkbox" id = "accuracy6" name = "6" onchange = "changeCheckbox(6)"/>
+                    <label for = "6"> 6 </label>
+                    <input type = "checkbox" id = "accuracy7" name = "7" onchange = "changeCheckbox(7)"/>
+                    <label for = "7"> 7 </label>
+                    <input type = "checkbox" id = "accuracy8" name = "8" onchange = "changeCheckbox(8)"/>
+                    <label for = "8"> 8 </label>
+                    <input type = "checkbox" id = "accuracy9" name = "9" onchange = "changeCheckbox(9)"/>
+                    <label for = "9"> 9 </label>
+                </div>
+            </div>
+        </div>
+
+        <table style = "height : 18% ; width : 100%;">
+            <tr style = "height : 100% ;">
+                <td style = "min-width : 75%; height : 100% ;">
+                    <div style = "background : white ; height : 100% ; width : 100% ;">
+                        <textarea cols = "4" rows = "5" readonly >g(x) = </textarea>
+                        <textarea id = "equationInput" cols = "40" rows = "5" placeholder = "Display a function" onchange = "refreshCanvas()"></textarea>
+                    </div>
+                </td>
+                <td style = "min-width : 25% ; height : 100% ;">
+                    <div style = "width : 100%">
+                        <input id = "xInput" type = "text" placeholder = "x value"></input>
+                    </div>
+                    <div style = "margin-top : 8% ; width : 100%">
+                        <input id = "yInput" type = "text" placeholder = "y value"></input>
+                    </div>
+                    <div style = "margin-top : 8% ; width : 100%">
+                        <button onclick = "insertSpecialCoords()">Insert coordinates</input>
+                    </div>
+                </td>
+            </tr>
+        </table>
+
+        <script>
+            canvas = document.getElementById("canvas");
+            var canvasWidth = (canvas.width - canvas.width % 98) / 98;
+            var canvasHeight = (canvas.height - canvas.height % 98) / 98;
+            
+            StartingX = - canvasWidth;
+            StartingY = - canvasHeight;
+
+            ctx = canvas.getContext('2d');
+
+            zoomIn();
+            zoomOut()
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            drawGrid(canvas,ctx);
+            drawFunction(ctx,[0]);
+            drawSpecialFunction(ctx);
+        </script>
+    </body>
+</html>
